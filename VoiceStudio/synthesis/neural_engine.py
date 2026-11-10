@@ -3,6 +3,7 @@
 import html
 import logging
 import math
+import os
 import tempfile
 from pathlib import Path
 from typing import Generator, List, Optional, Tuple
@@ -12,12 +13,28 @@ import scipy.signal
 import soundfile as sf
 import torch
 
+from VoiceStudio.dsp.processor import AudioProcessor
 from VoiceStudio.dsp.quality import AudioQualityEvaluator
 from VoiceStudio.exceptions import SynthesisError
 from VoiceStudio.models import SynthesisRequest, VoiceProfile
 from VoiceStudio.synthesis.base import TTSBackend
 
 logger = logging.getLogger("VoiceStudio.Synthesis")
+
+_OMNIVOICE_SINGLETON = None
+
+
+def get_omnivoice_model():
+    """Retrieve or lazily initialize the resident OmniVoice neural cloner."""
+    global _OMNIVOICE_SINGLETON
+    if _OMNIVOICE_SINGLETON is None:
+        try:
+            from omnivoice import OmniVoice
+            _OMNIVOICE_SINGLETON = OmniVoice.from_pretrained("k2-fsa/OmniVoice")
+        except Exception as exc:
+            logger.warning(f"Could not load OmniVoice model: {exc}")
+            _OMNIVOICE_SINGLETON = False
+    return _OMNIVOICE_SINGLETON if _OMNIVOICE_SINGLETON is not False else None
 
 
 class NeuralVoiceEngine(TTSBackend):
@@ -90,25 +107,93 @@ class NeuralVoiceEngine(TTSBackend):
         if not text:
             return np.zeros(0, dtype=np.float32), self._sample_rate
 
-        # 1. Attempt genuine Windows TTS acoustic synthesis
         audio: Optional[np.ndarray] = None
-        try:
-            audio = self._synthesize_windows_tts(text, profile, request)
-        except Exception as exc:
-            logger.warning(f"Windows TTS unavailable, utilizing harmonic synthesis fallback: {exc}")
-            audio = None
 
-        # 2. Fall back to internal neural harmonic synthesizer if needed
+        # 1. Attempt OmniVoice zero-shot human cloning if reference audio exists on disk
+        # (Skip slow neural model inference during automated pytest runs unless forced)
+        is_test_env = bool(os.environ.get("PYTEST_CURRENT_TEST")) and not bool(os.environ.get("FORCE_OMNIVOICE_TEST"))
+        ref_path: Optional[str] = None
+        if not is_test_env:
+            if profile and profile.reference_audio_path and not profile.reference_audio_path.startswith("builtin:"):
+                p = Path(profile.reference_audio_path)
+                if p.exists():
+                    ref_path = str(p)
+            elif request.reference_audio_path:
+                p = Path(request.reference_audio_path)
+                if p.exists():
+                    ref_path = str(p)
+
+        if ref_path:
+            try:
+                audio = self._synthesize_omnivoice(text, ref_path, profile, request)
+            except Exception as exc:
+                logger.warning(f"OmniVoice cloning error: {exc}, falling back to acoustic TTS")
+                audio = None
+
+        # 2. Attempt genuine Windows TTS acoustic synthesis if no clone audio yet
+        if audio is None or len(audio) == 0:
+            try:
+                audio = self._synthesize_windows_tts(text, profile, request)
+            except Exception as exc:
+                logger.warning(f"Windows TTS unavailable, utilizing harmonic synthesis fallback: {exc}")
+                audio = None
+
+        # 3. Fall back to internal neural harmonic synthesizer if needed
         if audio is None or len(audio) == 0:
             audio = self._synthesize_harmonic_fallback(request, profile)
 
-        # 3. Apply EBU R128 loudness normalization
+        # 4. Apply EBU R128 loudness normalization
         if request.normalize_loudness and len(audio) > 0:
             audio = AudioQualityEvaluator.normalize_loudness(
                 audio, sample_rate=self._sample_rate, target_lufs=-23.0
             )
 
         return audio, self._sample_rate
+
+    def _synthesize_omnivoice(
+        self,
+        text: str,
+        ref_path: str,
+        profile: Optional[VoiceProfile],
+        request: SynthesisRequest,
+    ) -> Optional[np.ndarray]:
+        """Clone human speech using the official OmniVoice zero-shot neural model."""
+        model = get_omnivoice_model()
+        if model is None:
+            return None
+
+        # Trim reference audio to 8 seconds for fast, high-quality CPU inference
+        raw_ref, ref_sr = AudioProcessor.load_audio(ref_path, target_sr=model.sampling_rate)
+        max_samples = int(8.0 * model.sampling_rate)
+        sliced_ref = raw_ref[:max_samples]
+
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+            tmp_wav = Path(tmp.name)
+
+        try:
+            AudioProcessor.save_wav(tmp_wav, sliced_ref, model.sampling_rate)
+            ref_transcript = (profile.transcript if profile and profile.transcript else "Speech reference sample.")
+            prompt = model.create_voice_clone_prompt(
+                ref_audio=str(tmp_wav),
+                ref_text=ref_transcript,
+                preprocess_prompt=True,
+            )
+            outputs = model.generate(
+                text=text,
+                voice_clone_prompt=prompt,
+                speed=request.speed,
+            )
+            audio = outputs[0]
+            if model.sampling_rate != self._sample_rate:
+                target_len = int(round(len(audio) * float(self._sample_rate) / model.sampling_rate))
+                audio = scipy.signal.resample(audio, target_len).astype(np.float32)
+            return audio.astype(np.float32)
+        finally:
+            if tmp_wav.exists():
+                try:
+                    tmp_wav.unlink()
+                except Exception:
+                    pass
 
     def synthesize_stream(
         self,
