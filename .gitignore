@@ -1,5 +1,8 @@
-# Reference Repository
-VoiceStudio/
+# Data and runtime audio storage
+data/
+.pytest_cache/
+.git_reference/
+**/.git_reference/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

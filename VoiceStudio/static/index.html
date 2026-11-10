@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>VoiceStudio | Pure Python Voice Cloning Studio</title>
+  <link rel="stylesheet" href="/static/studio.css">
+</head>
+<body>
+
+  <!-- Top Session Bar -->
+  <header class="session-bar">
+    <div class="brand-title">VoiceStudio <span style="font-size: 12px; font-weight: 400; color: var(--text-muted);">| Autonomous Python DAW</span></div>
+    <div class="session-telemetry">
+      <span class="badge active" id="engineBadge">pytorch_neural_cpu</span>
+      <span class="badge" id="srBadge">24000 Hz</span>
+      <span class="badge" id="deviceBadge">CPU</span>
+    </div>
+  </header>
+
+  <!-- Workspace 2-Column Grid -->
+  <div class="workspace-grid">
+
+    <!-- Left Sidebar: Voice Profiles -->
+    <aside class="sidebar">
+      <div class="panel-header">
+        <span>Voice Profiles</span>
+      </div>
+      <div class="profiles-list" id="profilesList">
+        <!-- Injected via JavaScript -->
+      </div>
+      <div class="dropzone" id="dropzone">
+        <div style="font-size: 18px; margin-bottom: 4px;">🎙️</div>
+        <div class="dropzone-label">Drop reference WAV/MP3 to clone voice</div>
+        <input type="file" id="audioFileInput" accept=".wav,.mp3,.flac,.ogg" style="display: none;">
+      </div>
+    </aside>
+
+    <!-- Center Canvas: Synthesis Controls -->
+    <main class="synthesis-canvas">
+      <div class="editor-container">
+        <div class="panel-header" style="background: transparent; padding: 0 0 var(--space-sm) 0; border: none;">
+          <span>Speech Script</span>
+          <span style="font-size: 11px; color: var(--text-muted);">Ctrl + Enter to Generate</span>
+        </div>
+        <textarea
+          id="scriptInput"
+          class="script-input"
+          placeholder="Enter text to synthesize using the conditioned voice profile..."
+        >Welcome to VoiceStudio. This autonomous voice cloning studio is running local-first on Python.</textarea>
+      </div>
+
+      <div class="controls-row">
+        <div class="control-group">
+          <label class="control-label" for="speedSlider">
+            <span>Speech Speed</span>
+            <span class="slider-val" id="speedVal">1.00x</span>
+          </label>
+          <input type="range" id="speedSlider" min="0.5" max="2.0" step="0.05" value="1.0">
+        </div>
+
+        <div class="control-group">
+          <label class="control-label" for="pitchSlider">
+            <span>Pitch Modulation</span>
+            <span class="slider-val" id="pitchVal">0.0 st</span>
+          </label>
+          <input type="range" id="pitchSlider" min="-6.0" max="6.0" step="0.5" value="0.0">
+        </div>
+      </div>
+
+      <div class="actions-row">
+        <div>
+          <span style="font-size: 12px; color: var(--text-muted);">EBU R128 Loudness Normalization Active (-23 LUFS)</span>
+        </div>
+        <button id="synthesizeBtn" class="btn-primary">
+          <span>Synthesize Speech</span>
+        </button>
+      </div>
+
+      <div class="progress-bar-container">
+        <div id="progressBar" class="progress-bar"></div>
+      </div>
+    </main>
+  </div>
+
+  <!-- Bottom Audio Transport & Waveform Dock -->
+  <footer class="transport-dock">
+    <div class="transport-controls">
+      <button id="playBtn" class="btn-icon" title="Play/Pause (Space)">▶</button>
+      <button id="downloadBtn" class="btn-icon" title="Download WAV">⬇</button>
+      <span style="font-size: 12px; color: var(--text-secondary); margin-left: 8px;">Studio Monitor</span>
+    </div>
+
+    <div class="waveform-view">
+      <canvas id="waveformCanvas"></canvas>
+    </div>
+
+    <div class="telemetry-pane">
+      <div class="telemetry-row">
+        <span>Signal SNR:</span>
+        <span class="val-good" id="snrReadout">-- dB</span>
+      </div>
+      <div class="telemetry-row">
+        <span>Integrated LUFS:</span>
+        <span id="lufsReadout">-- LUFS</span>
+      </div>
+      <div class="telemetry-row">
+        <span>Peak Level:</span>
+        <span id="peakReadout">-- %</span>
+      </div>
+    </div>
+  </footer>
+
+  <script src="/static/studio.js"></script>
+</body>
+</html>
