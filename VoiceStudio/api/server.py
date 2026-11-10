@@ -141,10 +141,29 @@ def create_app(
         except VoiceProfileNotFoundError:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Profile not found")
 
+    _ACTIVE_SYNTHESIS_JOBS: Dict[str, Dict[str, Any]] = {}
+
     @app.post("/api/synthesize", summary="Synthesize Text-to-Speech")
-    async def synthesize_speech(req: SynthesisRequest) -> GenerationRecord:
+    def synthesize_speech(req: SynthesisRequest) -> GenerationRecord:
         t0 = time.perf_counter()
         profile: Optional[VoiceProfile] = None
+
+        if req.job_id:
+            _ACTIVE_SYNTHESIS_JOBS[req.job_id] = {
+                "status": "processing",
+                "progress_pct": 5,
+                "stage": "Initializing synthesis pipeline...",
+                "updated_at": time.time(),
+            }
+
+        def update_progress(pct: int, stage: str):
+            if req.job_id:
+                _ACTIVE_SYNTHESIS_JOBS[req.job_id] = {
+                    "status": "processing" if pct < 100 else "completed",
+                    "progress_pct": pct,
+                    "stage": stage,
+                    "updated_at": time.time(),
+                }
 
         if req.voice_profile_id:
             try:
@@ -153,7 +172,11 @@ def create_app(
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requested voice profile not found")
 
         engine = registry.get_engine()
-        audio_data, sr = engine.synthesize(req, profile=profile)
+        progress_cb = update_progress if req.job_id else None
+        audio_data, sr = engine.synthesize(req, profile=profile, progress_callback=progress_cb)
+
+        if req.job_id:
+            update_progress(95, "Saving output WAV file...")
 
         out_path = storage.allocate_output_path(prefix="tts", extension=".wav")
         AudioProcessor.save_wav(out_path, audio_data, sample_rate=sr)
@@ -161,6 +184,9 @@ def create_app(
         duration = float(len(audio_data) / sr) if sr > 0 else 0.0
         latency = float((time.perf_counter() - t0) * 1000.0)
         metrics = AudioQualityEvaluator.calculate_metrics(audio_data, sr)
+
+        if req.job_id:
+            update_progress(100, "Synthesis complete!")
 
         record = GenerationRecord(
             voice_profile_id=profile.id if profile else None,
@@ -195,19 +221,48 @@ def create_app(
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc))
 
     @app.get("/api/synthesize/sse", summary="Server-Sent Events Synthesis Progress")
-    async def synthesize_sse(text: str, profile_id: Optional[str] = None) -> StreamingResponse:
+    async def synthesize_sse(
+        text: Optional[str] = None,
+        profile_id: Optional[str] = None,
+        job_id: Optional[str] = None,
+    ) -> StreamingResponse:
         """Stream progress events during generation."""
         async def event_generator():
-            words = text.split()
-            total = len(words)
-            yield f"data: {json.dumps({'status': 'started', 'total_words': total})}\n\n"
-            for i, word in enumerate(words):
-                await asyncio.sleep(0.04)
-                pct = int(((i + 1) / total) * 100)
-                yield f"data: {json.dumps({'status': 'processing', 'word': word, 'progress_pct': pct})}\n\n"
-            yield f"data: {json.dumps({'status': 'completed', 'progress_pct': 100})}\n\n"
+            if job_id:
+                last_pct = -1
+                start_wait = time.time()
+                while time.time() - start_wait < 300.0:
+                    job = _ACTIVE_SYNTHESIS_JOBS.get(job_id)
+                    if job:
+                        pct = job.get("progress_pct", 0)
+                        stage = job.get("stage", "Processing speech...")
+                        status_str = job.get("status", "processing")
+                        if pct != last_pct:
+                            last_pct = pct
+                            yield f"data: {json.dumps({'status': status_str, 'progress_pct': pct, 'stage': stage})}\n\n"
+                        if status_str == "completed" or pct >= 100:
+                            break
+                    await asyncio.sleep(0.08)
+                yield f"data: {json.dumps({'status': 'completed', 'progress_pct': 100, 'stage': 'Synthesis complete'})}\n\n"
+            else:
+                raw_text = text or "Synthesis"
+                words = raw_text.split()
+                total = len(words) if words else 1
+                yield f"data: {json.dumps({'status': 'started', 'total_words': total})}\n\n"
+                for i, word in enumerate(words):
+                    await asyncio.sleep(0.04)
+                    pct = int(((i + 1) / total) * 100)
+                    yield f"data: {json.dumps({'status': 'processing', 'word': word, 'progress_pct': pct, 'stage': f'Synthesizing: {word}'})}\n\n"
+                yield f"data: {json.dumps({'status': 'completed', 'progress_pct': 100, 'stage': 'Completed'})}\n\n"
 
         return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+    @app.get("/api/synthesize/progress/{job_id}", summary="Get Status of Active Synthesis Job")
+    async def get_synthesis_progress(job_id: str) -> Dict[str, Any]:
+        job = _ACTIVE_SYNTHESIS_JOBS.get(job_id)
+        if not job:
+            return {"job_id": job_id, "status": "unknown", "progress_pct": 0, "stage": "Waiting to start..."}
+        return {"job_id": job_id, **job}
 
     @app.get("/", response_class=HTMLResponse, summary="Studio UI Workspace")
     async def serve_studio_ui() -> HTMLResponse:

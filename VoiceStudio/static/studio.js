@@ -20,6 +20,11 @@ document.addEventListener('DOMContentLoaded', () => {
   const pitchVal = document.getElementById('pitchVal');
   const synthesizeBtn = document.getElementById('synthesizeBtn');
   const progressBar = document.getElementById('progressBar');
+  const progressSection = document.getElementById('progressSection');
+  const progressStatusText = document.getElementById('progressStatusText');
+  const progressPercentage = document.getElementById('progressPercentage');
+  const progressSubtext = document.getElementById('progressSubtext');
+  const progressSpinner = document.getElementById('progressSpinner');
   const profilesList = document.getElementById('profilesList');
   const dropzone = document.getElementById('dropzone');
   const audioFileInput = document.getElementById('audioFileInput');
@@ -120,6 +125,13 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
+  function setProgress(pct, stage, sub) {
+    if (progressBar) progressBar.style.width = pct + '%';
+    if (progressPercentage) progressPercentage.textContent = pct + '%';
+    if (stage && progressStatusText) progressStatusText.textContent = stage;
+    if (sub && progressSubtext) progressSubtext.textContent = sub;
+  }
+
   async function uploadReferenceAudio(file) {
     const formData = new FormData();
     const name = prompt('Voice Profile Name:', file.name.replace(/\.[^/.]+$/, '')) || 'Uploaded Voice';
@@ -127,19 +139,27 @@ document.addEventListener('DOMContentLoaded', () => {
     formData.append('description', 'Reference voice recording');
     formData.append('file', file);
 
+    if (progressSection) progressSection.style.display = 'flex';
+    if (progressSpinner) progressSpinner.style.display = 'inline-block';
+    setProgress(30, 'Uploading audio sample...', 'Extracting acoustic embeddings');
+
     try {
       const res = await fetch('/api/voices/upload', {
         method: 'POST',
         body: formData,
       });
       if (res.ok) {
+        setProgress(100, 'Voice enrolled successfully!', `Profile "${name}" ready to synthesize`);
+        if (progressSpinner) progressSpinner.style.display = 'none';
         await loadVoiceProfiles();
       } else {
         const err = await res.json();
         alert('Upload failed: ' + err.detail);
+        setProgress(0, 'Upload failed', err.detail);
       }
     } catch (err) {
       alert('Error uploading voice reference: ' + err.message);
+      setProgress(0, 'Upload error', err.message);
     }
   }
 
@@ -158,25 +178,67 @@ document.addEventListener('DOMContentLoaded', () => {
     const text = scriptInput.value.trim();
     if (!text) return;
 
+    const jobId = 'synth_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
     synthesizeBtn.disabled = true;
-    progressBar.style.width = '0%';
 
-    const sse = new EventSource(`/api/synthesize/sse?text=${encodeURIComponent(text)}`);
-    sse.onmessage = (event) => {
-      const data = JSON.parse(event.data);
-      if (data.progress_pct) {
-        progressBar.style.width = data.progress_pct + '%';
+    // Show progress section
+    if (progressSection) progressSection.style.display = 'flex';
+    if (progressSpinner) progressSpinner.style.display = 'inline-block';
+    setProgress(5, 'Initializing synthesis pipeline...', 'CPU Inference Active');
+
+    let sse = null;
+    let pollInterval = null;
+    let sseActive = true;
+
+    try {
+      sse = new EventSource(`/api/synthesize/sse?job_id=${jobId}&text=${encodeURIComponent(text)}`);
+      sse.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          if (data.progress_pct !== undefined) {
+            setProgress(data.progress_pct, data.stage || 'Synthesizing voice...', data.word ? `Word: ${data.word}` : null);
+          }
+          if (data.status === 'completed' || data.progress_pct >= 100) {
+            sseActive = false;
+            sse.close();
+          }
+        } catch (e) {
+          console.warn('SSE parse error:', e);
+        }
+      };
+      sse.onerror = () => {
+        if (sse) sse.close();
+        sseActive = false;
+      };
+    } catch (e) {
+      console.warn('SSE connection failed, falling back to polling:', e);
+      sseActive = false;
+    }
+
+    // Polling fallback to ensure smooth updates even if SSE is buffered
+    pollInterval = setInterval(async () => {
+      if (!sseActive) {
+        try {
+          const res = await fetch(`/api/synthesize/progress/${jobId}`);
+          if (res.ok) {
+            const data = await res.json();
+            if (data.progress_pct !== undefined && data.progress_pct > 0) {
+              setProgress(data.progress_pct, data.stage);
+            }
+            if (data.status === 'completed' || data.progress_pct >= 100) {
+              clearInterval(pollInterval);
+            }
+          }
+        } catch (_) {}
       }
-      if (data.status === 'completed') {
-        sse.close();
-      }
-    };
+    }, 200);
 
     try {
       const res = await fetch('/api/synthesize', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          job_id: jobId,
           text: text,
           voice_profile_id: state.selectedVoiceId,
           speed: parseFloat(speedSlider.value),
@@ -187,17 +249,23 @@ document.addEventListener('DOMContentLoaded', () => {
 
       if (!res.ok) {
         const err = await res.json();
-        alert('Synthesis error: ' + err.detail);
+        alert('Synthesis error: ' + (err.detail || 'Unknown error'));
+        setProgress(0, 'Synthesis failed', err.detail);
         return;
       }
 
       const record = await res.json();
+      setProgress(100, 'Speech synthesis complete!', `Output saved: ${record.duration_sec}s (${record.sample_rate}Hz)`);
+      if (progressSpinner) progressSpinner.style.display = 'none';
+
       await loadGeneratedAudio(record.output_audio_path, record.quality_metrics);
     } catch (err) {
       console.error('Synthesis request failed:', err);
+      setProgress(0, 'Synthesis error', err.message);
     } finally {
+      if (sse) sse.close();
+      if (pollInterval) clearInterval(pollInterval);
       synthesizeBtn.disabled = false;
-      setTimeout(() => { progressBar.style.width = '0%'; }, 500);
     }
   }
 

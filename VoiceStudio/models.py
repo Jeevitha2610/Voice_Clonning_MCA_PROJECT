@@ -52,6 +52,7 @@ class SynthesisRequest(BaseModel):
     language: str = Field(default="en", description="Output speech language code")
     sample_rate: int = Field(default=24000, description="Desired output sample rate")
     normalize_loudness: bool = Field(default=True, description="Apply EBU R128 loudness normalization")
+    job_id: Optional[str] = Field(default=None, description="Optional job tracking identifier for real-time progress monitoring")
 
     @field_validator("text")
     @classmethod

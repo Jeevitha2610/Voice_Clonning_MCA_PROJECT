@@ -267,19 +267,92 @@ input[type="range"] {
   background-color: var(--accent-hover);
 }
 
-.progress-bar-container {
-  height: 4px;
-  background-color: var(--surface-elevated);
-  border-radius: 2px;
-  overflow: hidden;
+/* Real-Time Progress Section & Percentage Display */
+.progress-section {
+  background-color: var(--surface-panel);
+  border: 1px solid var(--surface-border);
+  border-radius: 8px;
+  padding: var(--space-md);
   margin-top: var(--space-sm);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  animation: fadeIn 0.2s ease-in-out;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.progress-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.progress-status-info {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.progress-status-text {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary);
+  letter-spacing: 0.2px;
+}
+
+.progress-percentage {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  font-weight: 700;
+  color: #3b82f6;
+  background-color: var(--surface-elevated);
+  padding: 2px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--surface-border);
+}
+
+.progress-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--surface-border);
+  border-top-color: #3b82f6;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  display: inline-block;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.progress-bar-container {
+  height: 8px;
+  background-color: var(--surface-base);
+  border-radius: 4px;
+  overflow: hidden;
+  position: relative;
+  border: 1px solid var(--surface-border);
 }
 
 .progress-bar {
   height: 100%;
   width: 0%;
-  background-color: var(--accent-primary);
-  transition: width 0.1s linear;
+  background: linear-gradient(90deg, #2563eb 0%, #3b82f6 50%, #60a5fa 100%);
+  border-radius: 4px;
+  transition: width 0.15s ease-out;
+  box-shadow: 0 0 10px rgba(59, 130, 246, 0.5);
+}
+
+.progress-subtext {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: var(--font-sans);
+  margin-top: 2px;
 }
 
 /* Bottom Transport & Waveform Canvas */

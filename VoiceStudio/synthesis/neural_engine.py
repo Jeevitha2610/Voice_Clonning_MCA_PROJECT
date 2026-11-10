@@ -6,7 +6,7 @@ import math
 import os
 import tempfile
 from pathlib import Path
-from typing import Generator, List, Optional, Tuple
+from typing import Callable, Generator, List, Optional, Tuple
 
 import numpy as np
 import scipy.signal
@@ -101,11 +101,15 @@ class NeuralVoiceEngine(TTSBackend):
         self,
         request: SynthesisRequest,
         profile: Optional[VoiceProfile] = None,
+        progress_callback: Optional[Callable[[int, str], None]] = None,
     ) -> Tuple[np.ndarray, int]:
         """Synthesize intelligible speech conditioned on a voice profile."""
         text = request.text.strip()
         if not text:
             return np.zeros(0, dtype=np.float32), self._sample_rate
+
+        if progress_callback:
+            progress_callback(10, "Analyzing voice conditioning & timbre...")
 
         audio: Optional[np.ndarray] = None
 
@@ -125,13 +129,15 @@ class NeuralVoiceEngine(TTSBackend):
 
         if ref_path:
             try:
-                audio = self._synthesize_omnivoice(text, ref_path, profile, request)
+                audio = self._synthesize_omnivoice(text, ref_path, profile, request, progress_callback=progress_callback)
             except Exception as exc:
                 logger.warning(f"OmniVoice cloning error: {exc}, falling back to acoustic TTS")
                 audio = None
 
         # 2. Attempt genuine Windows TTS acoustic synthesis if no clone audio yet
         if audio is None or len(audio) == 0:
+            if progress_callback:
+                progress_callback(40, "Synthesizing acoustic speech phonemes...")
             try:
                 audio = self._synthesize_windows_tts(text, profile, request)
             except Exception as exc:
@@ -140,13 +146,20 @@ class NeuralVoiceEngine(TTSBackend):
 
         # 3. Fall back to internal neural harmonic synthesizer if needed
         if audio is None or len(audio) == 0:
+            if progress_callback:
+                progress_callback(60, "Generating neural harmonic waveform...")
             audio = self._synthesize_harmonic_fallback(request, profile)
 
         # 4. Apply EBU R128 loudness normalization
         if request.normalize_loudness and len(audio) > 0:
+            if progress_callback:
+                progress_callback(90, "Applying EBU R128 loudness normalization...")
             audio = AudioQualityEvaluator.normalize_loudness(
                 audio, sample_rate=self._sample_rate, target_lufs=-23.0
             )
+
+        if progress_callback:
+            progress_callback(100, "Speech synthesis complete!")
 
         return audio, self._sample_rate
 
@@ -156,13 +169,18 @@ class NeuralVoiceEngine(TTSBackend):
         ref_path: str,
         profile: Optional[VoiceProfile],
         request: SynthesisRequest,
+        progress_callback: Optional[Callable[[int, str], None]] = None,
     ) -> Optional[np.ndarray]:
         """Clone human speech using the official OmniVoice zero-shot neural model."""
+        if progress_callback:
+            progress_callback(20, "Loading OmniVoice neural cloner model...")
         model = get_omnivoice_model()
         if model is None:
             return None
 
         # Trim reference audio to 8 seconds for fast, high-quality CPU inference
+        if progress_callback:
+            progress_callback(35, "Extracting reference voice timbre slice...")
         raw_ref, ref_sr = AudioProcessor.load_audio(ref_path, target_sr=model.sampling_rate)
         max_samples = int(8.0 * model.sampling_rate)
         sliced_ref = raw_ref[:max_samples]
@@ -173,11 +191,15 @@ class NeuralVoiceEngine(TTSBackend):
         try:
             AudioProcessor.save_wav(tmp_wav, sliced_ref, model.sampling_rate)
             ref_transcript = (profile.transcript if profile and profile.transcript else "Speech reference sample.")
+            if progress_callback:
+                progress_callback(50, "Encoding speaker voice clone prompt tokens on CPU...")
             prompt = model.create_voice_clone_prompt(
                 ref_audio=str(tmp_wav),
                 ref_text=ref_transcript,
                 preprocess_prompt=True,
             )
+            if progress_callback:
+                progress_callback(70, "Executing neural transformer auto-regressive synthesis...")
             outputs = model.generate(
                 text=text,
                 voice_clone_prompt=prompt,
@@ -187,6 +209,8 @@ class NeuralVoiceEngine(TTSBackend):
             if model.sampling_rate != self._sample_rate:
                 target_len = int(round(len(audio) * float(self._sample_rate) / model.sampling_rate))
                 audio = scipy.signal.resample(audio, target_len).astype(np.float32)
+            if progress_callback:
+                progress_callback(85, "Generated neural audio tensor")
             return audio.astype(np.float32)
         finally:
             if tmp_wav.exists():
