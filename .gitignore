@@ -3,6 +3,7 @@ data/
 .pytest_cache/
 .git_reference/
 **/.git_reference/
+.agents/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
