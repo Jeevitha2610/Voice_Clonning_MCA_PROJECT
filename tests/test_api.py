@@ -70,8 +70,8 @@ def test_voice_upload_and_synthesis_flow(client: TestClient):
     list_resp = client.get("/api/voices")
     assert list_resp.status_code == 200
     profiles = list_resp.json()
-    assert len(profiles) == 1
-    assert profiles[0]["id"] == profile_id
+    assert len(profiles) >= 1
+    assert any(p["id"] == profile_id for p in profiles)
 
     # 4. Synthesize speech using the uploaded voice profile
     synth_resp = client.post(

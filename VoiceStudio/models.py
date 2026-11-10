@@ -33,7 +33,7 @@ class VoiceProfile(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     name: str = Field(..., min_length=1, max_length=120, description="Human-readable voice label")
     description: Optional[str] = Field(default="", description="Optional description or tags")
-    reference_audio_path: str = Field(..., description="Path to the source reference audio file")
+    reference_audio_path: Optional[str] = Field(default=None, description="Path to the source reference audio file or URI")
     transcript: Optional[str] = Field(default=None, description="Reference audio transcript if known")
     speaker_embedding: Optional[List[float]] = Field(default=None, description="Acoustic speaker embedding vector")
     language: str = Field(default="en", description="Primary language code (e.g. 'en', 'es', 'de')")

@@ -106,6 +106,8 @@ class NeuralVoiceEngine(TTSBackend):
         if profile and profile.speaker_embedding:
             emb_bias = float(np.mean(profile.speaker_embedding[:16])) * 50.0
             base_f0 = max(85.0, min(260.0, base_f0 + emb_bias))
+        if profile and profile.metadata and "f0_shift" in profile.metadata:
+            base_f0 = max(70.0, min(320.0, base_f0 + float(profile.metadata["f0_shift"])))
 
         target_f0 = base_f0 * (2.0 ** (request.pitch / 12.0))
         speed = max(0.5, min(2.0, request.speed))

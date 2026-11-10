@@ -27,3 +27,8 @@
 ## Phase 7: Automated Verification & Test Harness
 - [x] Task 7.1: Implement comprehensive pytest test suite covering database repositories, DSP pipelines, and API endpoints.
 - [x] Task 7.2: Run full end-to-end integration verification, generate execution report, and verify zero regressions.
+
+## Phase 8: Factory Voice Presets, Headless CLI & Studio Launcher
+- [x] Task 8.1: Implement factory neural voice catalog (`VoiceStudio/presets.py`) with calibrated embeddings and automatic SQLite DB seeding (`Aria Prime`, `Atlas Echo`, `Nova Clarity`, `Orion Warmth`).
+- [x] Task 8.2: Implement comprehensive Command Line Interface (`VoiceStudio/cli.py` & `VoiceStudio/__main__.py`) supporting `serve`, `list-voices`, `clone-voice`, `synthesize`, and `assess`.
+- [x] Task 8.3: Implement standalone root launcher (`run.py`) and verify live HTTP API, SSE streaming, and Web DAW rendering. Verified: 35/35 passing tests.

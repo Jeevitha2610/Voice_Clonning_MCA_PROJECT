@@ -26,6 +26,7 @@ from VoiceStudio.models import (
     SynthesisRequest,
     VoiceProfile,
 )
+from VoiceStudio.presets import seed_preset_voices
 from VoiceStudio.storage.media import StorageService
 from VoiceStudio.synthesis.neural_engine import NeuralVoiceEngine
 from VoiceStudio.synthesis.registry import EngineRegistry
@@ -58,6 +59,7 @@ def create_app(
         init_schema(conn)
 
     profile_repo = VoiceProfileRepository(db)
+    seed_preset_voices(profile_repo)
     gen_repo = GenerationRepository(db)
     storage = storage_service or StorageService(
         base_dir=config.data_dir,
