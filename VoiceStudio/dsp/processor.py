@@ -1,7 +1,8 @@
 """Audio signal processing pipeline for resampling, channel downmixing, and WAV I/O."""
 
+import math
 from pathlib import Path
-from typing import Tuple
+from typing import Optional, Tuple
 
 import numpy as np
 import scipy.signal
@@ -14,14 +15,22 @@ class AudioProcessor:
     """Handles audio loading, conversion, channel downmixing, and sample rate conversion."""
 
     @staticmethod
-    def load_audio(file_path: Path | str, target_sr: int = 24000) -> Tuple[np.ndarray, int]:
+    def load_audio(
+        file_path: Path | str,
+        target_sr: int = 24000,
+        max_duration_sec: Optional[float] = None,
+    ) -> Tuple[np.ndarray, int]:
         """Read an audio file from disk, convert to mono float32, and resample to target_sr."""
         path = Path(file_path)
         if not path.exists():
             raise AudioProcessingError(f"Audio file does not exist: {file_path}")
 
         try:
-            data, sr = sf.read(str(path), dtype="float32")
+            frames = -1
+            if max_duration_sec is not None and max_duration_sec > 0:
+                info = sf.info(str(path))
+                frames = int(max_duration_sec * info.samplerate)
+            data, sr = sf.read(str(path), frames=frames, dtype="float32")
         except Exception as exc:
             raise AudioProcessingError(f"Failed to decode audio file {file_path}: {exc}") from exc
 
@@ -42,14 +51,56 @@ class AudioProcessor:
         return data.astype(np.float32), sr
 
     @staticmethod
+    def extract_best_voice_slice(
+        audio: np.ndarray,
+        sample_rate: int = 24000,
+        slice_sec: float = 5.5,
+    ) -> np.ndarray:
+        """Select the highest-energy speech window and normalize its level for voice cloning."""
+        if len(audio) == 0:
+            return audio
+
+        target_len = int(slice_sec * sample_rate)
+        if len(audio) <= target_len:
+            best_slice = audio.copy()
+        else:
+            hop = max(1, int(0.5 * sample_rate))
+            best_rms = -1.0
+            best_start = 0
+            max_search = min(len(audio) - target_len, int(25.0 * sample_rate))
+            for start in range(0, max_search + 1, hop):
+                window = audio[start : start + target_len]
+                rms = float(np.sqrt(np.mean(window**2)))
+                if rms > best_rms:
+                    best_rms = rms
+                    best_start = start
+            best_slice = audio[best_start : best_start + target_len].copy()
+
+        # Normalize RMS to ~0.15 with peak ceiling at 0.92 so quiet references clone loudly
+        rms = float(np.sqrt(np.mean(best_slice**2)))
+        if rms > 1e-5:
+            best_slice = best_slice * (0.15 / rms)
+        peak = float(np.max(np.abs(best_slice)))
+        if peak > 0.92:
+            best_slice = best_slice * (0.92 / peak)
+
+        return best_slice.astype(np.float32)
+
+    @staticmethod
     def resample(audio: np.ndarray, orig_sr: int, target_sr: int) -> np.ndarray:
-        """High-precision sample rate conversion using polyphase or FFT resampling."""
+        """High-precision sample rate conversion using polyphase filtering."""
         if orig_sr == target_sr or len(audio) == 0:
             return audio
 
-        num_target_samples = int(round(len(audio) * float(target_sr) / orig_sr))
         try:
-            resampled = scipy.signal.resample(audio, num_target_samples)
+            gcd = math.gcd(int(orig_sr), int(target_sr))
+            up = int(target_sr) // gcd
+            down = int(orig_sr) // gcd
+            if up <= 1000 and down <= 1000:
+                resampled = scipy.signal.resample_poly(audio, up, down)
+            else:
+                num_target_samples = int(round(len(audio) * float(target_sr) / orig_sr))
+                resampled = scipy.signal.resample(audio, num_target_samples)
             return resampled.astype(np.float32)
         except Exception as exc:
             raise AudioProcessingError(f"Resampling from {orig_sr}Hz to {target_sr}Hz failed: {exc}") from exc

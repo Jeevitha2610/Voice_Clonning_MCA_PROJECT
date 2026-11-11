@@ -180,15 +180,35 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const jobId = 'synth_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
     synthesizeBtn.disabled = true;
+    const tStart = performance.now();
+    let maxPctSeen = 5;
+    let latestStage = 'Initializing synthesis pipeline...';
+
+    const selectedCard = document.querySelector('.profile-card.selected .profile-name span');
+    const activeVoiceLabel = selectedCard ? selectedCard.textContent.trim() : 'Selected Voice';
 
     // Show progress section
     if (progressSection) progressSection.style.display = 'flex';
     if (progressSpinner) progressSpinner.style.display = 'inline-block';
-    setProgress(5, 'Initializing synthesis pipeline...', 'CPU Inference Active');
+    setProgress(5, `Initializing synthesis for '${activeVoiceLabel}'...`, `Voice: ${activeVoiceLabel} • Elapsed: 0.0s`);
 
     let sse = null;
     let pollInterval = null;
-    let sseActive = true;
+
+    function updateLiveProgress(pct, stage) {
+      if (typeof pct === 'number' && pct >= maxPctSeen) {
+        maxPctSeen = pct;
+      }
+      if (stage) {
+        latestStage = stage;
+      }
+      const elapsedSec = ((performance.now() - tStart) / 1000).toFixed(1);
+      setProgress(
+        maxPctSeen,
+        latestStage,
+        `Voice: ${activeVoiceLabel} • Progress: ${maxPctSeen}% • Elapsed: ${elapsedSec}s`
+      );
+    }
 
     try {
       sse = new EventSource(`/api/synthesize/sse?job_id=${jobId}&text=${encodeURIComponent(text)}`);
@@ -196,10 +216,9 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
           const data = JSON.parse(event.data);
           if (data.progress_pct !== undefined) {
-            setProgress(data.progress_pct, data.stage || 'Synthesizing voice...', data.word ? `Word: ${data.word}` : null);
+            updateLiveProgress(data.progress_pct, data.stage || 'Synthesizing voice...');
           }
           if (data.status === 'completed' || data.progress_pct >= 100) {
-            sseActive = false;
             sse.close();
           }
         } catch (e) {
@@ -208,30 +227,30 @@ document.addEventListener('DOMContentLoaded', () => {
       };
       sse.onerror = () => {
         if (sse) sse.close();
-        sseActive = false;
       };
     } catch (e) {
-      console.warn('SSE connection failed, falling back to polling:', e);
-      sseActive = false;
+      console.warn('SSE connection failed, using direct progress polling:', e);
     }
 
-    // Polling fallback to ensure smooth updates even if SSE is buffered
+    // Continuous 250ms polling alongside SSE so progress percentage and elapsed timer never freeze
     pollInterval = setInterval(async () => {
-      if (!sseActive) {
-        try {
-          const res = await fetch(`/api/synthesize/progress/${jobId}`);
-          if (res.ok) {
-            const data = await res.json();
-            if (data.progress_pct !== undefined && data.progress_pct > 0) {
-              setProgress(data.progress_pct, data.stage);
-            }
-            if (data.status === 'completed' || data.progress_pct >= 100) {
-              clearInterval(pollInterval);
-            }
+      try {
+        const res = await fetch(`/api/synthesize/progress/${jobId}`);
+        if (res.ok) {
+          const data = await res.json();
+          if (data.progress_pct !== undefined && data.progress_pct > 0) {
+            updateLiveProgress(data.progress_pct, data.stage);
+          } else {
+            updateLiveProgress(maxPctSeen, latestStage);
           }
-        } catch (_) {}
+          if (data.status === 'completed' || data.progress_pct >= 100) {
+            clearInterval(pollInterval);
+          }
+        }
+      } catch (_) {
+        updateLiveProgress(maxPctSeen, latestStage);
       }
-    }, 200);
+    }, 250);
 
     try {
       const res = await fetch('/api/synthesize', {
@@ -255,7 +274,13 @@ document.addEventListener('DOMContentLoaded', () => {
       }
 
       const record = await res.json();
-      setProgress(100, 'Speech synthesis complete!', `Output saved: ${record.duration_sec}s (${record.sample_rate}Hz)`);
+      const totalSec = ((performance.now() - tStart) / 1000).toFixed(1);
+      maxPctSeen = 100;
+      setProgress(
+        100,
+        `Speech synthesis complete for '${record.voice_name}'!`,
+        `Voice: ${record.voice_name} • Duration: ${record.duration_sec}s (${record.sample_rate}Hz) • Completed in ${totalSec}s`
+      );
       if (progressSpinner) progressSpinner.style.display = 'none';
 
       await loadGeneratedAudio(record.output_audio_path, record.quality_metrics);

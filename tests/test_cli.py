@@ -10,6 +10,15 @@ from VoiceStudio.cli import main
 from VoiceStudio.config import config
 
 
+@pytest.fixture(autouse=True)
+def isolated_cli_storage(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ensure CLI tests operate on an isolated temporary database and media directory."""
+    monkeypatch.setattr(config, "data_dir", tmp_path / "cli_data")
+    monkeypatch.setattr(config, "db_path", tmp_path / "cli_data" / "test_cli.db")
+    monkeypatch.setattr(config, "uploads_dir", tmp_path / "cli_data" / "uploads")
+    monkeypatch.setattr(config, "outputs_dir", tmp_path / "cli_data" / "outputs")
+
+
 @pytest.fixture
 def sample_wav(tmp_path: Path) -> Path:
     sr = 24000

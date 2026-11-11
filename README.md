@@ -9,12 +9,13 @@ VoiceStudio is a desktop-grade audio workstation that runs completely on your ow
 
 ## 🚀 Quick Start (In 60 Seconds)
 
-You don't need any complex setup or cloud accounts. Follow these two simple steps:
+You don't need any complex setup or cloud accounts. Follow these simple steps:
 
-### Step 1: Open Your Terminal
-Open PowerShell or Command Prompt on your computer, and navigate to the project folder:
+### Step 1: Open Your Terminal & Install Dependencies
+Open PowerShell or Command Prompt on your computer, navigate to the project folder, and install the required packages from `requirements.txt`:
 ```powershell
 cd "C:\Users\Jeevitha J R\Desktop\project"
+pip install -r requirements.txt
 ```
 
 ### Step 2: Start the Studio
@@ -182,11 +183,40 @@ No. VoiceStudio is optimized specifically for standard **CPU** processing. It ru
 
 ---
 
-## 🛠️ Verification & Testing
+## 🧠 Neural Voice Cloning & Real-Time Progress Architecture
 
-To verify that all 35 internal automated tests are passing:
+VoiceStudio uses **`k2-fsa/OmniVoice`** (600+ language zero-shot neural voice cloning with HiggsAudioV2 Acoustic Tokenizer) optimized for fast local CPU inference:
+
+1. **Smart Reference Audio Extraction (`AudioProcessor.extract_best_voice_slice`):**
+   - Partial frame loading reads only the first 25 seconds of long `.mp3`/`.wav` files using polyphase resampling (`scipy.signal.resample_poly`).
+   - Automatically locates the highest-energy 5.5-second continuous speech window and normalizes RMS energy (`0.15`) so quiet historical recordings (such as `swamiji.mp3`) synthesize at full broadcast volume (`-20 LUFS`).
+2. **Persistent Voiceprint Prompt Caching (`data/cache/`):**
+   - Extracted neural `VoiceClonePrompt` acoustic tokens are cached in memory and on disk (`data/cache/voice_prompt_<voice_id>.pt`), accelerating repeat synthesis for any voice.
+3. **Real-Time Step-by-Step Progress Bar (Web UI & Terminal):**
+   - A PyTorch forward pre-hook attached to the `OmniVoice` Transformer backbone tracks each iterative decoding pass (`Step 1/8` through `Step 8/8`) along with a 1.2-second sub-step heartbeat.
+   - Live progress (`0%` → `8%` → `15%` → `42%` → `45%`..`88%` → `90%` → `94%` → `100%`) streams simultaneously to the **Terminal console** and the **Web UI progress bar** (with active voice name and live elapsed timer).
+
+---
+
+## 🛠️ Verification & End-to-End (E2E) Testing
+
+### 1. Run Unit & Integration Tests (Pytest)
+To verify that all 35 internal automated tests pass:
 ```powershell
 python -m pytest -v
 ```
+
+### 2. Batch Pre-Cache & Verify All Cloned Test Voices
+To clean test database entries, pre-cache voiceprint prompts, and generate verified synthetic speech `.wav` outputs for all test voices (`Swami Vivekananda`, `Dr. A.P.J. Abdul Kalam`, `S. Janaki`):
+```powershell
+python generate_all_test_clones.py
+```
+
+### 3. Run Full Playwright Browser E2E Verification
+To run the automated Chromium browser E2E test verifying live Web UI progress tracking (`Swami Vivekananda (Test Voice)` from `0%` to `100%`), multi-voice switching, waveform rendering, and synthetic speech acoustic telemetry (`NEW-Test-Outcomes/`):
+```powershell
+python run_playwright_e2e.py
+```
+All E2E test screenshots, synthetic `.wav` files, and the detailed verification report are saved in `NEW-Test-Outcomes/`.
 
 Enjoy creating your custom voices with **VoiceStudio**! 🎙️✨
